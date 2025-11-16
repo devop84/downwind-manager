@@ -14,10 +14,20 @@ if (process.env.DATABASE_URL) {
   const { Pool } = require('pg');
   dbType = 'postgres';
   
+  console.log('DATABASE_URL detected, using PostgreSQL');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_URL.includes('localhost') ? false : {
       rejectUnauthorized: false
+    }
+  });
+  
+  // Test connection
+  pool.query('SELECT NOW()', (err, res) => {
+    if (err) {
+      console.error('PostgreSQL connection error:', err.message);
+    } else {
+      console.log('PostgreSQL connected successfully');
     }
   });
 
@@ -45,18 +55,20 @@ if (process.env.DATABASE_URL) {
       
       pool.query(modifiedQuery, params || [])
         .then(result => {
-          const mockThis = {
+          // Create a mock statement object like SQLite does
+          const statement = {
             lastID: result.rows[0]?.id || null,
             changes: result.rowCount || 0
           };
-          // Call callback with error as first param (null) and this as second
+          // SQLite callback signature: callback(err) where 'this' is the statement
           if (callback) {
-            // SQLite callback signature: callback(err, this)
-            callback.call(mockThis, null);
+            callback.call(statement, null);
           }
         })
         .catch(err => {
-          if (callback) callback(err);
+          if (callback) {
+            callback.call({ lastID: null, changes: 0 }, err);
+          }
         });
     },
     serialize: (callback) => {

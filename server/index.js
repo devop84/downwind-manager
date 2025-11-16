@@ -37,13 +37,12 @@ const db = initDatabase();
 
 // Authentication middleware
 const requireAuth = (req, res, next) => {
-  // Debug logging (remove in production if needed)
-  if (process.env.NODE_ENV !== 'production') {
-    console.log('Auth check - Session:', req.session ? 'exists' : 'missing', 'UserId:', req.session?.userId);
-  }
+  // Debug logging
+  console.log('Auth check - Session exists:', !!req.session, 'UserId:', req.session?.userId, 'Username:', req.session?.username);
   if (req.session && req.session.userId) {
     next();
   } else {
+    console.log('401 Unauthorized - No valid session');
     res.status(401).json({ error: 'Unauthorized. Please login.' });
   }
 };

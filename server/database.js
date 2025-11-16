@@ -5,6 +5,7 @@ const bcrypt = require('bcrypt');
 const DB_PATH = path.join(__dirname, 'kitesurfing.db');
 
 function initDatabase() {
+  console.log('Using SQLite database (local development)');
   const db = new sqlite3.Database(DB_PATH, (err) => {
     if (err) {
       console.error('Error opening database:', err.message);
