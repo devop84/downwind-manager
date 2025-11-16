@@ -102,11 +102,13 @@ const db = initDatabase();
 // Authentication middleware
 const requireAuth = (req, res, next) => {
   // Debug logging
-  console.log('Auth check - Session exists:', !!req.session, 'UserId:', req.session?.userId, 'Username:', req.session?.username);
+  console.log('Auth check - Session exists:', !!req.session, 'Session ID:', req.session?.id, 'UserId:', req.session?.userId, 'Username:', req.session?.username);
+  console.log('Request headers - cookie:', req.headers.cookie ? 'Present' : 'Missing');
+  
   if (req.session && req.session.userId) {
     next();
   } else {
-    console.log('401 Unauthorized - No valid session');
+    console.log('401 Unauthorized - No valid session. Session object:', req.session);
     res.status(401).json({ error: 'Unauthorized. Please login.' });
   }
 };
@@ -158,13 +160,20 @@ app.post('/api/login', (req, res) => {
         req.session.userId = user.id;
         req.session.username = user.username;
         req.session.role = user.role || 'user';
+        
+        console.log('Setting session - UserId:', user.id, 'Username:', user.username, 'Role:', user.role);
+        console.log('Session ID before save:', req.sessionID);
+        
         // Save session explicitly
         req.session.save((err) => {
           if (err) {
             console.error('Error saving session:', err);
-            res.status(500).json({ error: 'Error saving session' });
+            console.error('Session error details:', err.message, err.stack);
+            res.status(500).json({ error: 'Error saving session: ' + err.message });
             return;
           }
+          console.log('Session saved successfully - Session ID:', req.sessionID);
+          console.log('Session cookie will be sent with response');
           res.json({ message: 'Login successful', username: user.username, role: user.role || 'user' });
         });
       } else {
@@ -245,10 +254,10 @@ app.post('/api/signup', (req, res) => {
 
 // Check authentication status
 app.get('/api/auth/status', (req, res) => {
-  // Debug: log session info
-  if (process.env.NODE_ENV !== 'production') {
-    console.log('Auth status check - Session exists:', !!req.session, 'UserId:', req.session?.userId);
-  }
+  // Debug: log session info (enable in production for debugging)
+  console.log('Auth status check - Session exists:', !!req.session, 'Session ID:', req.session?.id, 'UserId:', req.session?.userId, 'Username:', req.session?.username);
+  console.log('Request headers - cookie:', req.headers.cookie ? 'Present' : 'Missing');
+  
   if (req.session && req.session.userId) {
     res.json({ 
       authenticated: true, 
@@ -256,6 +265,7 @@ app.get('/api/auth/status', (req, res) => {
       role: req.session.role || 'user'
     });
   } else {
+    console.log('No valid session found - user not authenticated');
     res.json({ authenticated: false });
   }
 });
