@@ -36,6 +36,10 @@ const db = initDatabase();
 
 // Authentication middleware
 const requireAuth = (req, res, next) => {
+  // Debug logging (remove in production if needed)
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('Auth check - Session:', req.session ? 'exists' : 'missing', 'UserId:', req.session?.userId);
+  }
   if (req.session && req.session.userId) {
     next();
   } else {
@@ -90,7 +94,15 @@ app.post('/api/login', (req, res) => {
         req.session.userId = user.id;
         req.session.username = user.username;
         req.session.role = user.role || 'user';
-        res.json({ message: 'Login successful', username: user.username, role: user.role || 'user' });
+        // Save session explicitly
+        req.session.save((err) => {
+          if (err) {
+            console.error('Error saving session:', err);
+            res.status(500).json({ error: 'Error saving session' });
+            return;
+          }
+          res.json({ message: 'Login successful', username: user.username, role: user.role || 'user' });
+        });
       } else {
         res.status(401).json({ error: 'Invalid username or password' });
       }
@@ -169,6 +181,10 @@ app.post('/api/signup', (req, res) => {
 
 // Check authentication status
 app.get('/api/auth/status', (req, res) => {
+  // Debug: log session info
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('Auth status check - Session exists:', !!req.session, 'UserId:', req.session?.userId);
+  }
   if (req.session && req.session.userId) {
     res.json({ 
       authenticated: true, 
