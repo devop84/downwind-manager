@@ -4,7 +4,7 @@ import { SearchInput } from './common/SearchInput';
 import { Modal } from './common/Modal';
 import { Pagination, PaginationControls } from './common/Pagination';
 
-const API_URL = 'http://localhost:5000/api';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 function Trips({ userRole = 'user' }) {
   const canModify = userRole === 'admin' || userRole === 'manager';
