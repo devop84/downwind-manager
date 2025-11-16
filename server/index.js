@@ -12,19 +12,57 @@ const { initDatabase } = process.env.DATABASE_URL ? require('./database-pg') : r
 let sessionStore;
 if (process.env.DATABASE_URL) {
   // Use PostgreSQL session store in production
-  const pgSession = require('connect-pg-simple')(session);
-  const { Pool } = require('pg');
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_URL.includes('localhost') ? false : {
-      rejectUnauthorized: false
-    }
-  });
-  sessionStore = new pgSession({
-    pool: pool,
-    tableName: 'user_sessions' // Optional: customize table name
-  });
-  console.log('Using PostgreSQL session store');
+  try {
+    const pgSession = require('connect-pg-simple')(session);
+    const { Pool } = require('pg');
+    const pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DATABASE_URL.includes('localhost') ? false : {
+        rejectUnauthorized: false
+      }
+    });
+    
+    // Test the pool connection
+    pool.query('SELECT NOW()')
+      .then(() => {
+        console.log('Session store PostgreSQL pool connected successfully');
+      })
+      .catch(err => {
+        console.error('Session store PostgreSQL connection error:', err.message);
+      });
+    
+    sessionStore = new pgSession({
+      pool: pool,
+      tableName: 'user_sessions' // Optional: customize table name
+    });
+    
+    // Ensure session table exists with correct schema for connect-pg-simple
+    // Note: connect-pg-simple should create this automatically, but we'll ensure it exists
+    pool.query(`
+      CREATE TABLE IF NOT EXISTS user_sessions (
+        sid VARCHAR(255) NOT NULL PRIMARY KEY,
+        sess JSON NOT NULL,
+        expire TIMESTAMP(6) NOT NULL
+      )
+    `).then(() => {
+      console.log('Session table verified/created');
+      // Create index on expire column for better performance
+      return pool.query(`
+        CREATE INDEX IF NOT EXISTS IDX_user_sessions_expire ON user_sessions (expire)
+      `);
+    }).then(() => {
+      console.log('Session table index created');
+    }).catch(err => {
+      console.error('Error setting up session table:', err.message);
+      console.error('Error details:', err);
+    });
+    
+    console.log('Using PostgreSQL session store');
+  } catch (err) {
+    console.error('Error initializing PostgreSQL session store:', err.message);
+    console.error('Falling back to MemoryStore (not recommended for production)');
+    sessionStore = undefined; // Fallback to MemoryStore
+  }
 } else {
   // Use MemoryStore in development (local)
   sessionStore = undefined; // undefined = MemoryStore (default)
