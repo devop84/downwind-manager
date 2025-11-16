@@ -8,6 +8,29 @@ const bcrypt = require('bcrypt');
 // Use PostgreSQL adapter if DATABASE_URL is set (production), otherwise use SQLite (local)
 const { initDatabase } = process.env.DATABASE_URL ? require('./database-pg') : require('./database');
 
+// Configure session store - use PostgreSQL in production, MemoryStore in development
+let sessionStore;
+if (process.env.DATABASE_URL) {
+  // Use PostgreSQL session store in production
+  const pgSession = require('connect-pg-simple')(session);
+  const { Pool } = require('pg');
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL.includes('localhost') ? false : {
+      rejectUnauthorized: false
+    }
+  });
+  sessionStore = new pgSession({
+    pool: pool,
+    tableName: 'user_sessions' // Optional: customize table name
+  });
+  console.log('Using PostgreSQL session store');
+} else {
+  // Use MemoryStore in development (local)
+  sessionStore = undefined; // undefined = MemoryStore (default)
+  console.log('Using MemoryStore for sessions (development only)');
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -20,17 +43,20 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // Session configuration
-app.use(session({
+const sessionConfig = {
   secret: process.env.SESSION_SECRET || 'kitesurfing-secret-key-change-in-production',
   resave: false,
   saveUninitialized: false,
+  store: sessionStore, // Use PostgreSQL store in production, MemoryStore in development
   cookie: {
     secure: process.env.NODE_ENV === 'production', // Use secure cookies in production (HTTPS)
     httpOnly: true,
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // Required for cross-origin in production
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
-}));
+};
+
+app.use(session(sessionConfig));
 
 // Initialize database
 const db = initDatabase();
