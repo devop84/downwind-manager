@@ -104,18 +104,6 @@ const sessionConfig = {
 
 app.use(session(sessionConfig));
 
-// Debug middleware to log response headers (temporary)
-app.use((req, res, next) => {
-  const originalSetHeader = res.setHeader;
-  res.setHeader = function(name, value) {
-    if (name.toLowerCase() === 'set-cookie') {
-      console.log('Setting cookie in response:', value);
-    }
-    return originalSetHeader.call(this, name, value);
-  };
-  next();
-});
-
 // Initialize database
 const db = initDatabase();
 

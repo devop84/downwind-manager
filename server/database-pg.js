@@ -68,6 +68,17 @@ if (process.env.DATABASE_URL) {
   // Create a database adapter that mimics SQLite API
   db = {
     all: (query, params, callback) => {
+      // Handle SQLite's optional params: db.all(query, callback) or db.all(query, params, callback)
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      
+      if (!callback || typeof callback !== 'function') {
+        console.error('db.all called without a callback function');
+        return;
+      }
+      
       if (!pool) {
         callback(new Error('Database pool not initialized'));
         return;
@@ -91,6 +102,17 @@ if (process.env.DATABASE_URL) {
       }
     },
     get: (query, params, callback) => {
+      // Handle SQLite's optional params: db.get(query, callback) or db.get(query, params, callback)
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      
+      if (!callback || typeof callback !== 'function') {
+        console.error('db.get called without a callback function');
+        return;
+      }
+      
       if (!pool) {
         callback(new Error('Database pool not initialized'));
         return;
@@ -114,12 +136,21 @@ if (process.env.DATABASE_URL) {
       }
     },
     run: (query, params, callback) => {
+      // Handle SQLite's optional params: db.run(query, callback) or db.run(query, params, callback)
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      
+      // Make callback optional for db.run (used in initDatabase without callbacks)
+      if (!callback) {
+        callback = () => {}; // No-op callback
+      }
+      
       if (!pool) {
         const error = new Error('Database pool not initialized');
         console.error('Database pool not initialized when trying to run query:', query);
-        if (callback) {
-          callback.call({ lastID: null, changes: 0 }, error);
-        }
+        callback.call({ lastID: null, changes: 0 }, error);
         return;
       }
       
@@ -127,9 +158,7 @@ if (process.env.DATABASE_URL) {
       if (typeof pool.query !== 'function') {
         const error = new Error('Database pool.query is not a function');
         console.error('Database pool.query is not a function. Pool type:', typeof pool, 'Pool:', pool);
-        if (callback) {
-          callback.call({ lastID: null, changes: 0 }, error);
-        }
+        callback.call({ lastID: null, changes: 0 }, error);
         return;
       }
       
@@ -151,9 +180,7 @@ if (process.env.DATABASE_URL) {
         if (!queryPromise || typeof queryPromise.then !== 'function') {
           const error = new Error('pool.query did not return a Promise');
           console.error('pool.query did not return a Promise. Returned:', typeof queryPromise, queryPromise);
-          if (callback) {
-            callback.call({ lastID: null, changes: 0 }, error);
-          }
+          callback.call({ lastID: null, changes: 0 }, error);
           return;
         }
         
@@ -165,21 +192,15 @@ if (process.env.DATABASE_URL) {
               changes: result.rowCount || 0
             };
             // SQLite callback signature: callback(err) where 'this' is the statement
-            if (callback) {
-              callback.call(statement, null);
-            }
+            callback.call(statement, null);
           })
           .catch(err => {
             console.error('Database query error:', err.message, 'Query:', modifiedQuery);
-            if (callback) {
-              callback.call({ lastID: null, changes: 0 }, err);
-            }
+            callback.call({ lastID: null, changes: 0 }, err);
           });
       } catch (err) {
         console.error('Error executing database query:', err.message, 'Query:', modifiedQuery);
-        if (callback) {
-          callback.call({ lastID: null, changes: 0 }, err);
-        }
+        callback.call({ lastID: null, changes: 0 }, err);
       }
     },
     serialize: (callback) => {
