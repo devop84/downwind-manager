@@ -1,23 +1,325 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const session = require('express-session');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const bcrypt = require('bcrypt');
 const { initDatabase } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:3000',
+  credentials: true
+}));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// Session configuration
+app.use(session({
+  secret: 'kitesurfing-secret-key-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: false, // Set to true in production with HTTPS
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
 
 // Initialize database
 const db = initDatabase();
 
+// Authentication middleware
+const requireAuth = (req, res, next) => {
+  if (req.session && req.session.userId) {
+    next();
+  } else {
+    res.status(401).json({ error: 'Unauthorized. Please login.' });
+  }
+};
+
+// Role-based middleware
+const requireRole = (...allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.session || !req.session.userId) {
+      res.status(401).json({ error: 'Unauthorized. Please login.' });
+      return;
+    }
+
+    const userRole = req.session.role || 'user';
+    if (allowedRoles.includes(userRole)) {
+      next();
+    } else {
+      res.status(403).json({ error: 'Forbidden. Insufficient permissions.' });
+    }
+  };
+};
+
+// Login endpoint
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+    res.status(400).json({ error: 'Username and password are required' });
+    return;
+  }
+
+  db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+
+    if (!user) {
+      res.status(401).json({ error: 'Invalid username or password' });
+      return;
+    }
+
+    bcrypt.compare(password, user.password, (err, match) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+
+      if (match) {
+        req.session.userId = user.id;
+        req.session.username = user.username;
+        req.session.role = user.role || 'user';
+        res.json({ message: 'Login successful', username: user.username, role: user.role || 'user' });
+      } else {
+        res.status(401).json({ error: 'Invalid username or password' });
+      }
+    });
+  });
+});
+
+// Logout endpoint
+app.post('/api/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      res.status(500).json({ error: 'Error logging out' });
+    } else {
+      res.json({ message: 'Logout successful' });
+    }
+  });
+});
+
+// Signup endpoint
+app.post('/api/signup', (req, res) => {
+  const { username, password, role } = req.body;
+  
+  if (!username || !password) {
+    res.status(400).json({ error: 'Username and password are required' });
+    return;
+  }
+
+  if (username.length < 3) {
+    res.status(400).json({ error: 'Username must be at least 3 characters long' });
+    return;
+  }
+
+  if (password.length < 6) {
+    res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    return;
+  }
+
+  // Check if username already exists
+  db.get('SELECT * FROM users WHERE username = ?', [username], (err, existingUser) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+
+    if (existingUser) {
+      res.status(400).json({ error: 'Username already exists' });
+      return;
+    }
+
+    // Hash password and create user (default role is 'user', admin can create manager/user but not admin)
+    let userRole = 'user';
+    if (role && req.session && req.session.role === 'admin') {
+      // Only allow creating manager or user roles, never admin
+      if (role === 'manager' || role === 'user') {
+        userRole = role;
+      }
+    }
+    
+    bcrypt.hash(password, 10, (err, hash) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+
+      db.run('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', [username, hash, userRole], function(err) {
+        if (err) {
+          res.status(500).json({ error: err.message });
+          return;
+        }
+
+        res.json({ message: 'Account created successfully', username, role: userRole });
+      });
+    });
+  });
+});
+
+// Check authentication status
+app.get('/api/auth/status', (req, res) => {
+  if (req.session && req.session.userId) {
+    res.json({ 
+      authenticated: true, 
+      username: req.session.username,
+      role: req.session.role || 'user'
+    });
+  } else {
+    res.json({ authenticated: false });
+  }
+});
+
+// Routes for Users (Admin only)
+app.get('/api/users', requireAuth, requireRole('admin'), (req, res) => {
+  db.all('SELECT id, username, role, created_at FROM users ORDER BY username', (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(rows);
+  });
+});
+
+app.get('/api/users/:id', requireAuth, requireRole('admin'), (req, res) => {
+  db.get('SELECT id, username, role, created_at FROM users WHERE id = ?', [req.params.id], (err, row) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    if (!row) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    res.json(row);
+  });
+});
+
+app.put('/api/users/:id', requireAuth, requireRole('admin'), (req, res) => {
+  const { username, role } = req.body;
+  
+  if (!username || !role) {
+    res.status(400).json({ error: 'Username and role are required' });
+    return;
+  }
+
+  if (!['admin', 'manager', 'user'].includes(role)) {
+    res.status(400).json({ error: 'Invalid role. Must be admin, manager, or user' });
+    return;
+  }
+
+  // Prevent changing role to admin (only the default admin user can be admin)
+  if (role === 'admin') {
+    res.status(400).json({ error: 'Cannot change role to admin. Only the default admin user can have admin role.' });
+    return;
+  }
+
+  // Get current user to check if they're changing from admin
+  db.get('SELECT role, username FROM users WHERE id = ?', [req.params.id], (err, currentUser) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+
+    if (!currentUser) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    // Prevent changing the default admin user's role
+    if (currentUser.username === 'admin' && role !== 'admin') {
+      res.status(400).json({ error: 'Cannot change the default admin user\'s role.' });
+      return;
+    }
+
+    // Prevent removing the last admin
+    if (currentUser.role === 'admin' && role !== 'admin') {
+      db.get('SELECT COUNT(*) as count FROM users WHERE role = ?', ['admin'], (err, result) => {
+        if (err) {
+          res.status(500).json({ error: err.message });
+          return;
+        }
+        if (result.count <= 1) {
+          res.status(400).json({ error: 'Cannot change role. At least one admin user is required.' });
+          return;
+        }
+        
+        db.run('UPDATE users SET username = ?, role = ? WHERE id = ?', [username, role, req.params.id], function(err) {
+          if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+          }
+          res.json({ id: req.params.id, username, role });
+        });
+      });
+    } else {
+      db.run('UPDATE users SET username = ?, role = ? WHERE id = ?', [username, role, req.params.id], function(err) {
+        if (err) {
+          res.status(500).json({ error: err.message });
+          return;
+        }
+        res.json({ id: req.params.id, username, role });
+      });
+    }
+  });
+});
+
+app.delete('/api/users/:id', requireAuth, requireRole('admin'), (req, res) => {
+  // Prevent deleting yourself
+  if (parseInt(req.params.id) === req.session.userId) {
+    res.status(400).json({ error: 'Cannot delete your own account' });
+    return;
+  }
+
+  // Prevent deleting the last admin
+  db.get('SELECT role FROM users WHERE id = ?', [req.params.id], (err, user) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+
+    if (user && user.role === 'admin') {
+      db.get('SELECT COUNT(*) as count FROM users WHERE role = ?', ['admin'], (err, result) => {
+        if (err) {
+          res.status(500).json({ error: err.message });
+          return;
+        }
+        if (result.count <= 1) {
+          res.status(400).json({ error: 'Cannot delete the last admin user' });
+          return;
+        }
+        
+        db.run('DELETE FROM users WHERE id = ?', [req.params.id], function(err) {
+          if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+          }
+          res.json({ message: 'User deleted successfully' });
+        });
+      });
+    } else {
+      db.run('DELETE FROM users WHERE id = ?', [req.params.id], function(err) {
+        if (err) {
+          res.status(500).json({ error: err.message });
+          return;
+        }
+        res.json({ message: 'User deleted successfully' });
+      });
+    }
+  });
+});
+
 // Routes for Clients
-app.get('/api/clients', (req, res) => {
+app.get('/api/clients', requireAuth, (req, res) => {
   db.all('SELECT * FROM clients ORDER BY name', (err, rows) => {
     if (err) {
       res.status(500).json({ error: err.message });
@@ -27,7 +329,7 @@ app.get('/api/clients', (req, res) => {
   });
 });
 
-app.get('/api/clients/:id', (req, res) => {
+app.get('/api/clients/:id', requireAuth, (req, res) => {
   db.get('SELECT * FROM clients WHERE id = ?', [req.params.id], (err, row) => {
     if (err) {
       res.status(500).json({ error: err.message });
@@ -41,7 +343,7 @@ app.get('/api/clients/:id', (req, res) => {
   });
 });
 
-app.post('/api/clients', (req, res) => {
+app.post('/api/clients', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   const { name, email, phone, address } = req.body;
   db.run(
     'INSERT INTO clients (name, email, phone, address) VALUES (?, ?, ?, ?)',
@@ -56,7 +358,7 @@ app.post('/api/clients', (req, res) => {
   );
 });
 
-app.put('/api/clients/:id', (req, res) => {
+app.put('/api/clients/:id', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   const { name, email, phone, address } = req.body;
   db.run(
     'UPDATE clients SET name = ?, email = ?, phone = ?, address = ? WHERE id = ?',
@@ -71,7 +373,7 @@ app.put('/api/clients/:id', (req, res) => {
   );
 });
 
-app.delete('/api/clients/:id', (req, res) => {
+app.delete('/api/clients/:id', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   db.run('DELETE FROM clients WHERE id = ?', [req.params.id], function(err) {
     if (err) {
       res.status(500).json({ error: err.message });
@@ -82,8 +384,8 @@ app.delete('/api/clients/:id', (req, res) => {
 });
 
 // Routes for Hotels
-app.get('/api/hotels', (req, res) => {
-  db.all('SELECT * FROM hotels ORDER BY name', (err, rows) => {
+app.get('/api/hotels', requireAuth, (req, res) => {
+  db.all('SELECT * FROM hotels ORDER BY id', (err, rows) => {
     if (err) {
       res.status(500).json({ error: err.message });
       return;
@@ -92,7 +394,7 @@ app.get('/api/hotels', (req, res) => {
   });
 });
 
-app.get('/api/hotels/:id', (req, res) => {
+app.get('/api/hotels/:id', requireAuth, (req, res) => {
   db.get('SELECT * FROM hotels WHERE id = ?', [req.params.id], (err, row) => {
     if (err) {
       res.status(500).json({ error: err.message });
@@ -106,37 +408,37 @@ app.get('/api/hotels/:id', (req, res) => {
   });
 });
 
-app.post('/api/hotels', (req, res) => {
-  const { name, location, address, phone, email, rating, capacity } = req.body;
+app.post('/api/hotels', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+  const { name, location, address, phone, email, website, pix, notes } = req.body;
   db.run(
-    'INSERT INTO hotels (name, location, address, phone, email, rating, capacity) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [name, location, address, phone, email, rating, capacity],
+    'INSERT INTO hotels (name, location, address, phone, email, website, pix, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [name, location, address, phone, email, website, pix, notes],
     function(err) {
       if (err) {
         res.status(500).json({ error: err.message });
         return;
       }
-      res.json({ id: this.lastID, name, location, address, phone, email, rating, capacity });
+      res.json({ id: this.lastID, name, location, address, phone, email, website, pix, notes });
     }
   );
 });
 
-app.put('/api/hotels/:id', (req, res) => {
-  const { name, location, address, phone, email, rating, capacity } = req.body;
+app.put('/api/hotels/:id', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+  const { name, location, address, phone, email, website, pix, notes } = req.body;
   db.run(
-    'UPDATE hotels SET name = ?, location = ?, address = ?, phone = ?, email = ?, rating = ?, capacity = ? WHERE id = ?',
-    [name, location, address, phone, email, rating, capacity, req.params.id],
+    'UPDATE hotels SET name = ?, location = ?, address = ?, phone = ?, email = ?, website = ?, pix = ?, notes = ? WHERE id = ?',
+    [name, location, address, phone, email, website, pix, notes, req.params.id],
     function(err) {
       if (err) {
         res.status(500).json({ error: err.message });
         return;
       }
-      res.json({ id: req.params.id, name, location, address, phone, email, rating, capacity });
+      res.json({ id: req.params.id, name, location, address, phone, email, website, pix, notes });
     }
   );
 });
 
-app.delete('/api/hotels/:id', (req, res) => {
+app.delete('/api/hotels/:id', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   db.run('DELETE FROM hotels WHERE id = ?', [req.params.id], function(err) {
     if (err) {
       res.status(500).json({ error: err.message });
@@ -147,7 +449,7 @@ app.delete('/api/hotels/:id', (req, res) => {
 });
 
 // Routes for Trips
-app.get('/api/trips', (req, res) => {
+app.get('/api/trips', requireAuth, (req, res) => {
   db.all(`
     SELECT t.*, h.name as hotel_name, h.location as hotel_location
     FROM trips t
@@ -162,7 +464,7 @@ app.get('/api/trips', (req, res) => {
   });
 });
 
-app.get('/api/trips/:id', (req, res) => {
+app.get('/api/trips/:id', requireAuth, (req, res) => {
   db.get(`
     SELECT t.*, h.name as hotel_name, h.location as hotel_location
     FROM trips t
@@ -181,7 +483,7 @@ app.get('/api/trips/:id', (req, res) => {
   });
 });
 
-app.post('/api/trips', (req, res) => {
+app.post('/api/trips', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   const { name, description, start_date, end_date, price, hotel_id, max_participants } = req.body;
   db.run(
     'INSERT INTO trips (name, description, start_date, end_date, price, hotel_id, max_participants) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -196,7 +498,7 @@ app.post('/api/trips', (req, res) => {
   );
 });
 
-app.put('/api/trips/:id', (req, res) => {
+app.put('/api/trips/:id', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   const { name, description, start_date, end_date, price, hotel_id, max_participants } = req.body;
   db.run(
     'UPDATE trips SET name = ?, description = ?, start_date = ?, end_date = ?, price = ?, hotel_id = ?, max_participants = ? WHERE id = ?',
@@ -211,7 +513,7 @@ app.put('/api/trips/:id', (req, res) => {
   );
 });
 
-app.delete('/api/trips/:id', (req, res) => {
+app.delete('/api/trips/:id', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   db.run('DELETE FROM trips WHERE id = ?', [req.params.id], function(err) {
     if (err) {
       res.status(500).json({ error: err.message });
@@ -222,7 +524,7 @@ app.delete('/api/trips/:id', (req, res) => {
 });
 
 // Routes for Bookings
-app.get('/api/bookings', (req, res) => {
+app.get('/api/bookings', requireAuth, (req, res) => {
   db.all(`
     SELECT b.*, 
            c.name as client_name, c.email as client_email,
@@ -240,7 +542,7 @@ app.get('/api/bookings', (req, res) => {
   });
 });
 
-app.get('/api/bookings/:id', (req, res) => {
+app.get('/api/bookings/:id', requireAuth, (req, res) => {
   db.get(`
     SELECT b.*, 
            c.name as client_name, c.email as client_email,
@@ -262,7 +564,7 @@ app.get('/api/bookings/:id', (req, res) => {
   });
 });
 
-app.post('/api/bookings', (req, res) => {
+app.post('/api/bookings', requireAuth, (req, res) => {
   const { client_id, trip_id, booking_date, status, participants } = req.body;
   db.run(
     'INSERT INTO bookings (client_id, trip_id, booking_date, status, participants) VALUES (?, ?, ?, ?, ?)',
@@ -277,7 +579,7 @@ app.post('/api/bookings', (req, res) => {
   );
 });
 
-app.put('/api/bookings/:id', (req, res) => {
+app.put('/api/bookings/:id', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   const { client_id, trip_id, booking_date, status, participants } = req.body;
   db.run(
     'UPDATE bookings SET client_id = ?, trip_id = ?, booking_date = ?, status = ?, participants = ? WHERE id = ?',
@@ -292,7 +594,7 @@ app.put('/api/bookings/:id', (req, res) => {
   );
 });
 
-app.delete('/api/bookings/:id', (req, res) => {
+app.delete('/api/bookings/:id', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   db.run('DELETE FROM bookings WHERE id = ?', [req.params.id], function(err) {
     if (err) {
       res.status(500).json({ error: err.message });

@@ -1,5 +1,6 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const bcrypt = require('bcrypt');
 
 const DB_PATH = path.join(__dirname, 'kitesurfing.db');
 
@@ -14,6 +15,22 @@ function initDatabase() {
 
   // Create tables
   db.serialize(() => {
+    // Users table
+    db.run(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT DEFAULT 'user',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Add role column if it doesn't exist (for existing databases)
+    db.run(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`, (err) => {
+      // Ignore error if column already exists
+    });
+
     // Clients table
     db.run(`
       CREATE TABLE IF NOT EXISTS clients (
@@ -31,15 +48,27 @@ function initDatabase() {
       CREATE TABLE IF NOT EXISTS hotels (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
-        location TEXT NOT NULL,
+        location TEXT,
         address TEXT,
         phone TEXT,
         email TEXT,
-        rating INTEGER,
-        capacity INTEGER,
+        website TEXT,
+        pix TEXT,
+        notes TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    
+    // Add new columns if they don't exist (for existing databases)
+    db.run(`ALTER TABLE hotels ADD COLUMN website TEXT`, (err) => {
+      // Ignore error if column already exists
+    });
+    db.run(`ALTER TABLE hotels ADD COLUMN pix TEXT`, (err) => {
+      // Ignore error if column already exists
+    });
+    db.run(`ALTER TABLE hotels ADD COLUMN notes TEXT`, (err) => {
+      // Ignore error if column already exists
+    });
 
     // Trips table
     db.run(`
@@ -71,6 +100,37 @@ function initDatabase() {
         FOREIGN KEY (trip_id) REFERENCES trips(id)
       )
     `);
+
+    // Create default admin account (username: admin, password: password)
+    db.get('SELECT * FROM users WHERE username = ?', ['admin'], (err, row) => {
+      if (err) {
+        console.error('Error checking admin user:', err.message);
+      } else if (!row) {
+        // Hash the password 'password'
+        bcrypt.hash('password', 10, (err, hash) => {
+          if (err) {
+            console.error('Error hashing password:', err.message);
+          } else {
+            db.run('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', ['admin', hash, 'admin'], (err) => {
+              if (err) {
+                console.error('Error creating admin user:', err.message);
+              } else {
+                console.log('Default admin account created (username: admin, password: password, role: admin)');
+              }
+            });
+          }
+        });
+      } else if (row.role !== 'admin') {
+        // Update existing admin user to have admin role
+        db.run('UPDATE users SET role = ? WHERE username = ?', ['admin', 'admin'], (err) => {
+          if (err) {
+            console.error('Error updating admin role:', err.message);
+          } else {
+            console.log('Admin user role updated to admin');
+          }
+        });
+      }
+    });
   });
 
   return db;

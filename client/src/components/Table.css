@@ -130,6 +130,23 @@
   letter-spacing: 0.5px;
 }
 
+.data-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  transition: background-color 0.2s ease;
+}
+
+.data-table th.sortable:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.data-table th .sort-icon {
+  font-size: 16px;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
 .data-table td {
   padding: 15px;
   border-bottom: 1px solid #dee2e6;
@@ -163,6 +180,41 @@
   cursor: pointer;
   margin-right: 5px;
   transition: all 0.2s ease;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.btn-icon .material-icons {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.btn-primary.btn-icon,
+.btn-secondary.btn-icon {
+  padding: 10px;
+  min-width: 40px;
+  min-height: 40px;
+}
+
+.btn-primary.btn-icon .material-icons,
+.btn-secondary.btn-icon .material-icons {
+  font-size: 20px;
+  margin-right: 0;
+}
+
+.btn-edit.btn-icon,
+.btn-delete.btn-icon {
+  padding: 8px;
+  min-width: 36px;
+  min-height: 36px;
+  margin-right: 5px;
 }
 
 .btn-edit {
