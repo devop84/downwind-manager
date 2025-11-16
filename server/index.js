@@ -5,7 +5,8 @@ const session = require('express-session');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const bcrypt = require('bcrypt');
-const { initDatabase } = require('./database');
+// Use PostgreSQL adapter if DATABASE_URL is set (production), otherwise use SQLite (local)
+const { initDatabase } = process.env.DATABASE_URL ? require('./database-pg') : require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
