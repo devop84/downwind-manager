@@ -9,13 +9,14 @@ let db;
 let dbType = 'sqlite'; // 'sqlite' or 'postgres'
 
 // Check if we should use PostgreSQL
+let pool;
 if (process.env.DATABASE_URL) {
   // Use PostgreSQL
   const { Pool } = require('pg');
   dbType = 'postgres';
   
   console.log('DATABASE_URL detected, using PostgreSQL');
-  const pool = new Pool({
+  pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_URL.includes('localhost') ? false : {
       rejectUnauthorized: false
@@ -23,27 +24,44 @@ if (process.env.DATABASE_URL) {
   });
   
   // Test connection
-  pool.query('SELECT NOW()', (err, res) => {
-    if (err) {
-      console.error('PostgreSQL connection error:', err.message);
-    } else {
+  pool.query('SELECT NOW()')
+    .then(() => {
       console.log('PostgreSQL connected successfully');
-    }
-  });
+    })
+    .catch(err => {
+      console.error('PostgreSQL connection error:', err.message);
+    });
 
   // Create a database adapter that mimics SQLite API
   db = {
     all: (query, params, callback) => {
-      pool.query(query, params || [])
-        .then(result => callback(null, result.rows))
-        .catch(err => callback(err));
+      const queryPromise = pool.query(query, params || []);
+      if (queryPromise && typeof queryPromise.then === 'function') {
+        queryPromise
+          .then(result => callback(null, result.rows))
+          .catch(err => callback(err));
+      } else {
+        callback(new Error('Database query failed'));
+      }
     },
     get: (query, params, callback) => {
-      pool.query(query, params || [])
-        .then(result => callback(null, result.rows[0] || null))
-        .catch(err => callback(err));
+      const queryPromise = pool.query(query, params || []);
+      if (queryPromise && typeof queryPromise.then === 'function') {
+        queryPromise
+          .then(result => callback(null, result.rows[0] || null))
+          .catch(err => callback(err));
+      } else {
+        callback(new Error('Database query failed'));
+      }
     },
     run: (query, params, callback) => {
+      if (!pool) {
+        if (callback) {
+          callback.call({ lastID: null, changes: 0 }, new Error('Database pool not initialized'));
+        }
+        return;
+      }
+      
       // For INSERT statements, add RETURNING id to get the last inserted ID
       let modifiedQuery = query;
       if (query.trim().toUpperCase().startsWith('INSERT')) {
@@ -53,6 +71,7 @@ if (process.env.DATABASE_URL) {
         }
       }
       
+      // pool.query always returns a Promise
       pool.query(modifiedQuery, params || [])
         .then(result => {
           // Create a mock statement object like SQLite does
@@ -66,6 +85,7 @@ if (process.env.DATABASE_URL) {
           }
         })
         .catch(err => {
+          console.error('Database query error:', err.message, 'Query:', modifiedQuery);
           if (callback) {
             callback.call({ lastID: null, changes: 0 }, err);
           }
