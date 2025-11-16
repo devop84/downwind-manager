@@ -72,10 +72,15 @@ if (process.env.DATABASE_URL) {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Trust proxy - required for Render and other reverse proxies
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -86,15 +91,30 @@ const sessionConfig = {
   resave: false,
   saveUninitialized: false,
   store: sessionStore, // Use PostgreSQL store in production, MemoryStore in development
+  name: 'sessionId', // Explicit session cookie name
   cookie: {
     secure: process.env.NODE_ENV === 'production', // Use secure cookies in production (HTTPS)
     httpOnly: true,
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // Required for cross-origin in production
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    // Don't set domain - let browser handle it
+    // path: '/' is default
   }
 };
 
 app.use(session(sessionConfig));
+
+// Debug middleware to log response headers (temporary)
+app.use((req, res, next) => {
+  const originalSetHeader = res.setHeader;
+  res.setHeader = function(name, value) {
+    if (name.toLowerCase() === 'set-cookie') {
+      console.log('Setting cookie in response:', value);
+    }
+    return originalSetHeader.call(this, name, value);
+  };
+  next();
+});
 
 // Initialize database
 const db = initDatabase();
@@ -174,6 +194,7 @@ app.post('/api/login', (req, res) => {
           }
           console.log('Session saved successfully - Session ID:', req.sessionID);
           console.log('Session cookie will be sent with response');
+          console.log('Response headers - Set-Cookie:', res.getHeader('Set-Cookie'));
           res.json({ message: 'Login successful', username: user.username, role: user.role || 'user' });
         });
       } else {
