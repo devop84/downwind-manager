@@ -46,6 +46,25 @@ if (process.env.DATABASE_URL) {
     pool = null;
   }
 
+  // Helper function to convert SQLite ? parameters to PostgreSQL $1, $2, ... format
+  const convertQuery = (query, params) => {
+    if (!params || params.length === 0) {
+      return { query, params: [] };
+    }
+    
+    // Count the number of ? placeholders
+    const placeholders = query.match(/\?/g);
+    if (!placeholders) {
+      return { query, params };
+    }
+    
+    // Replace ? with $1, $2, $3, etc.
+    let paramIndex = 1;
+    const convertedQuery = query.replace(/\?/g, () => `$${paramIndex++}`);
+    
+    return { query: convertedQuery, params };
+  };
+
   // Create a database adapter that mimics SQLite API
   db = {
     all: (query, params, callback) => {
@@ -58,7 +77,8 @@ if (process.env.DATABASE_URL) {
         return;
       }
       try {
-        const queryPromise = pool.query(query, params || []);
+        const { query: convertedQuery, params: convertedParams } = convertQuery(query, params || []);
+        const queryPromise = pool.query(convertedQuery, convertedParams);
         if (queryPromise && typeof queryPromise.then === 'function') {
           queryPromise
             .then(result => callback(null, result.rows))
@@ -80,7 +100,8 @@ if (process.env.DATABASE_URL) {
         return;
       }
       try {
-        const queryPromise = pool.query(query, params || []);
+        const { query: convertedQuery, params: convertedParams } = convertQuery(query, params || []);
+        const queryPromise = pool.query(convertedQuery, convertedParams);
         if (queryPromise && typeof queryPromise.then === 'function') {
           queryPromise
             .then(result => callback(null, result.rows[0] || null))
@@ -112,18 +133,20 @@ if (process.env.DATABASE_URL) {
         return;
       }
       
+      // Convert SQLite ? parameters to PostgreSQL $1, $2, ... format
+      let { query: modifiedQuery, params: convertedParams } = convertQuery(query, params || []);
+      
       // For INSERT statements, add RETURNING id to get the last inserted ID
-      let modifiedQuery = query;
-      if (query.trim().toUpperCase().startsWith('INSERT')) {
+      if (modifiedQuery.trim().toUpperCase().startsWith('INSERT')) {
         // Check if RETURNING is already in the query
-        if (!query.toUpperCase().includes('RETURNING')) {
-          modifiedQuery = query.replace(/;?\s*$/, '') + ' RETURNING id';
+        if (!modifiedQuery.toUpperCase().includes('RETURNING')) {
+          modifiedQuery = modifiedQuery.replace(/;?\s*$/, '') + ' RETURNING id';
         }
       }
       
       try {
         // pool.query always returns a Promise
-        const queryPromise = pool.query(modifiedQuery, params || []);
+        const queryPromise = pool.query(modifiedQuery, convertedParams);
         
         if (!queryPromise || typeof queryPromise.then !== 'function') {
           const error = new Error('pool.query did not return a Promise');
